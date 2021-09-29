@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Коррекция телефонных номеров CRM</title>
+	<style>
+		.preloader {
+			background-color: #fff;
+			position: fixed;
+			top: 0;
+			right: 0;
+			bottom: 0;
+			left: 0;
+			z-index: 1000;
+			opacity: 0.5;
+			display: none;
+		}
+		.preloader__loader {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+		}
+	</style>
+	<style type="text/css" media="all">
+		.error{
+			color: red;
+		}
+		.innerTable td {
+			padding: 0 !important;
+			vertical-align: center !important;
+		}
+		.table td {
+			text-align: center;
+		}
+	</style>
+</head>
+<body>
+<div class="preloader">
+	<div class="spinner-border text-secondary preloader__loader" role="status">
+		<span class="sr-only">Loading...</span>
+	</div></div>
+<script type="text/template" id="tableTemplate">
+	<table class="table table-striped table-bordered table-hover js-mainTable">
+		<thead>
+		<tr class="tableHead" style="font-size: small;">
+			<th title="">Элемент CRM</th>
+			<th title="">Всего</th>
+			<th title="">С телефонами</th>
+			<th title="">Телефонных номеров</th>
+			<th title="">Корректные номера</th>
+			<th>Могут быть исправлены</th>
+			<th>Формат номера не определён</th>
+		</tr>
+		</thead>
+		<tbody>
+
+		</tbody>
+		<tfoot>
+
+		</tfoot>
+	</table>
+</script>
+<script type="text/template" id="rowTemplate">
+	<tr class="row#TYPE_ID#">
+		<td>#TYPE_NAME_RU#</td>
+		<td>#TYPE_CNT#</td>
+		<td>#TYPE_WITH_PHONES#</td>
+		<td>#PHONES_CNT#</td>
+		<td>#PHONES_OK#
+			<br>
+			#OK_HTML#
+		</td>
+		<td>#PHONES_TO_CORRECT#
+			<br>
+			#TO_CORRECT_HTML#
+		</td>
+		<td>#PHONES_INCORRECT#
+			<br>
+			#INCORRECT_HTML#
+		</td>
+	</tr>
+</script>
+Данное приложение заменяет во всех 11-значных номерах "+7" или "7" или "+8" в начале номера на "8", а также дописывает "8383" в семизначные номера на 2 или 3 (дефисы и скобки игнорируются).
+<div id="results">
+
+</div>
+<script src="//code.jquery.com/jquery-3.3.1.min.js"></script>
+
+<script src="//api.bitrix24.com/api/v1/"></script>
+
+<link rel="stylesheet" href="//cdn.datatables.net/1.10.20/css/jquery.dataTables.min.css"/>
+<script src="//cdn.datatables.net/1.10.20/js/jquery.dataTables.min.js"></script>
+
+<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+<script>
+    window.timeout = 50;
+    window.activeCallsLimit = 10;
+    window.activeCallsTimeout = 300;
+    //Функция батчит списочные методы, возвращает промис
+    function batchedCall(method, params) {
+        return new Promise(function(resolve, reject) {
+            setTimeout(function() { BX24.callMethod(
+                method,
+                params,
+                function(result)
+                {
+                    //console.dir(result.total());
+                    if(result.error())
+                        console.error(result.error());
+                    else
+                    {
+                        var total = result.total();
+                        //console.log('total ' + total);
+                        let batchTotal = total;
+                        if (total > 50) {
+                            var batch = [];
+                            let oListResult = result.data();
+                            var calls = Math.ceil(total / 50);
+                            var current_call = 1;
+                            while (current_call < calls) {
+                                params["start"] = current_call * 50;
+                                batch.push([method, JSON.parse(JSON.stringify(params))]);
+                                current_call++;
+                                if (current_call % 50 == 0 || current_call == calls) {
+                                    BX24.callBatch(batch, function(result)
+                                    {
+                                        //console.log(result);
+                                        var max = result.length;
+                                        for (var i = 0; i<max; i++) {
+                                            qRes = result[i].data();
+                                            oListResult = oListResult.concat(qRes);
+                                        }
+                                        console.log(oListResult.length);
+                                        console.log(batchTotal);
+                                        if (oListResult.length == batchTotal) {
+                                            resolve(oListResult);
+                                        }
+                                    });
+                                    batch = [];
+                                }
+                            }
+                        }
+                        else {
+                            resolve(result.data());
+                        }
+                    }
+                }
+            );}, window.timeout);
+        });
+    }
+    // промис на BX24.callBatch
+    function callBatchObj(arBatch) {
+        return new Promise(function(resolve, reject) {
+            var total = Object.keys(arBatch).length;
+            var batchResult = {};
+            console.log('batchObj total ' + total);
+            window.batchTotal = total;
+            //var calls = Math.ceil(total / 50);
+            var current_call = 0;
+            var batch = {};
+            while (current_call < total) {
+                batch[Object.keys(arBatch)[current_call]] = arBatch[Object.keys(arBatch)[current_call]];
+                current_call++;
+                if (current_call % 50 == 0 || current_call == total) {
+                    BX24.callBatch(batch, function (result) {
+                        for (var key in result) {
+                            if (result.hasOwnProperty(key)) {
+                                batchResult[key] = result[key];
+                            }
+                        }
+                        if (Object.keys(batchResult).length == window.batchTotal) {
+                            resolve(batchResult);
+                        }
+                    });
+                    batch = {};
+                }
+            }
+        });
+    }
+    //Пакует таблицу результата в ссылку на xls-файл и вставляет эту ссылку после таблицы
+    function toExcel() {
+        let name = 'phones';
+        $('.innerTable').each(function() {
+            var table = $(this);
+            //table.find('th:eq(0)').css('width', '300px');
+            // table.find('th:gt(0)').each(function(){
+            //     $(this).html($(this).attr('title')).css('width', '111px');
+            // });
+            // table.find('td').each(function(){
+            //     $(this).html($(this).html().replace(/'/g, '').replace(/\./g, ','));//заменяем символы, чтоб Ёксель правильно читал цифры
+            // });
+            //var tableHtml = $('#results').html(table).html().toString();
+            var tableHtml = $('<div>').append(table.clone()).html();
+            //tableHtml = tableHtml.replace(/<a.*href="(?<url>[^>"']*)"[^>]*>(?<title>[^<]*)<\/a>/g, "	$<title></td><td>$<url>");
+            //debugger;
+            table.after(
+                '<a href="data:text/xls;charset=utf-8,' + encodeURIComponent('\ufeff' + tableHtml) + '" download="' + name + '.xls">' + 'Скачать для Excel' + '</a>');
+        });
+
+    }
+    //Пакует таблицу результата в ссылку на txt-файл и вставляет эту ссылку после таблицы
+    function toTxt() {
+        let name = 'phones';
+        $('.innerTable').each(function() {
+            var table = $(this);
+            //table.find('th:eq(0)').css('width', '300px');
+            // table.find('th:gt(0)').each(function(){
+            //     $(this).html($(this).attr('title')).css('width', '111px');
+            // });
+            // table.find('td').each(function(){
+            //     $(this).html($(this).html().replace(/'/g, '').replace(/\./g, ','));//заменяем символы, чтоб Ёксель правильно читал цифры
+            // });
+            //var tableHtml = $('#results').html(table).html().toString();
+
+            var tableHtml = $('<div>').append(table.clone()).html();
+            tableHtml = tableHtml.replace(/<\/tr>/g, "\r\n");
+            tableHtml = tableHtml.replace(/<a.*href="(?<url>[^>"']*)"[^>]*>(?<title>[^<]*)<\/a>/g, "	$<title>		$<url>");
+            tableHtml = tableHtml.replace(/<[^>]*>/g, "");
+            //debugger;
+            table.after(
+                '<a href="data:text/txt;charset=utf-8,' + encodeURIComponent('\ufeff' + tableHtml) + '" download="' + name + '.txt">' + 'Скачать txt' + '</a>');
+        });
+
+    }
+    function formatMoney(num) {
+        return parseFloat(num).toFixed(2).replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1\'');
+    }
+    function echoTable() {
+        let table = '';
+        table = $($('#tableTemplate').html().toString());
+
+        $('#results').html('');
+        $('#results').append(table);
+
+        BX24.fitWindow();
+    }
+    function echoRow(typeID, scanResult) {
+        //debugger;
+        let row = '';
+        row = $('#rowTemplate').html().toString();
+        let arData = scanResult[typeID];
+        for (let key in arData) {
+            if (arData.hasOwnProperty(key)) {
+                let reg = new RegExp('#'+key+'#', 'g');
+                row = row.replace(reg, arData[key]);
+            }
+        }
+        //debugger;
+        $('#results').find('table').eq(0).find('tbody').eq(0).append(row);
+
+        //BX24.fitWindow();
+    }
+
+    function scanCrmPhones() {
+        $('.preloader').show();
+        echoTable();
+        let arEntityTypes = {
+            '1': 'lead',
+            '3': 'contact',
+            '4': 'company',
+        };
+        let arEntityTypesRu = {
+            '1': 'Лиды',
+            '3': 'Контакты',
+            '4': 'Компании',
+        };
+        let arEntityNameField = {
+            '1': ['TITLE'],
+            '3': ['LAST_NAME', 'NAME'],
+            '4': ['TITLE'],
+        };
+        let scanResult = {
+            'ITOGO': {
+                'INCORRECT_HTML': '',
+                'TO_CORRECT_HTML': '<button type="button" value="Go" class="js-submitButton btn btn-success">Исправить все номера</button>',
+                'OK_HTML': '',
+                'TYPE_NAME_RU': 'ИТОГО',
+                'TYPE_CNT': 0,
+                'TYPE_WITH_PHONES': 0,
+                'PHONES_CNT': 0,
+                'PHONES_OK': 0,
+                'PHONES_TO_CORRECT': 0,
+                'PHONES_INCORRECT': 0,
+
+            }
+        };
+        let arToCorrect = {};
+        let arIncorrect = {};
+        let arCorrect = {};
+        let scannedCount = 0;
+        window.arBatch = [];
+        for (let typeID in arEntityTypes) {
+            if (arEntityTypes.hasOwnProperty(typeID)) {
+                let typeName = arEntityTypes[typeID];
+                scanResult[typeName] = {};
+                let tableHtml = '<a href="#" class="js-showTable">Показать</a><br><table class="innerTable" style="display:none;">';
+                scanResult[typeName]['INCORRECT_HTML'] = tableHtml;
+                scanResult[typeName]['TO_CORRECT_HTML'] = tableHtml;
+                scanResult[typeName]['OK_HTML'] = tableHtml;
+                arToCorrect[typeName] = {};
+                arIncorrect[typeName] = {};
+                arCorrect[typeName] = {};
+                scanResult[typeName]['TYPE_NAME_RU'] = arEntityTypesRu[typeID];
+                scanResult[typeName]['TYPE_NAME'] = arEntityTypes[typeID];
+                scanResult[typeName]['TYPE_ID'] = typeID;
+                scanResult[typeName]['PHONES_CNT'] = 0;
+                scanResult[typeName]['PHONES_OK'] = 0;
+                scanResult[typeName]['PHONES_TO_CORRECT'] = 0;
+                scanResult[typeName]['PHONES_INCORRECT'] = 0;
+                // общее количество
+                new Promise(function(resolve, reject) {
+                    BX24.callMethod('crm.'+typeName+'.list', {
+                        'select': ['ID'],
+                    }, function(callRes) {
+                        if (callRes.error()) {
+                            console.error(callRes.error());
+                        }
+                        let resTotal = callRes.total();
+
+                        scanResult[typeName]['TYPE_CNT'] = resTotal;
+                        scanResult['ITOGO']['TYPE_CNT'] += resTotal;
+                        resolve(scanResult);
+                    });
+                }).then(function(scanResult) {
+                    //debugger;
+                    let arSelect = ['ID', 'PHONE'];
+                    arSelect = arSelect.concat(arEntityNameField[typeID]);
+                    return batchedCall('crm.'+typeName+'.list', {
+                        'select': arSelect,
+                        'filter': {'HAS_PHONE': 'Y'},
+                    });
+                }).then(function(arElements){
+                    //debugger;
+                    scanResult[typeName]['TYPE_WITH_PHONES'] = arElements.length;
+                    scanResult['ITOGO']['TYPE_WITH_PHONES'] += arElements.length;
+                    for (let i in arElements) {
+                        let arElement = arElements[i];
+                        let elementName = ((typeName == 'contact') ? arElement['LAST_NAME']+' '+arElement['NAME'] : arElement['TITLE']);
+                        for (let k in arElement['PHONE']) {
+                            scanResult[typeName]['PHONES_CNT']++;
+                            scanResult['ITOGO']['PHONES_CNT']++;
+                            let origVal = arElement['PHONE'][k]['VALUE'];
+                            let phoneVal = origVal.replace(/[()‒–\-\s]/g, '');
+                            let phoneID = arElement['PHONE'][k]['ID'];
+                            if (phoneVal.search(/^(?<num>[23]\d{6})$/) > -1 || phoneVal.search(/^\+?7?(?<num>[34789]\d{9})$/) > -1 || phoneVal.search(/^\+8(?<num>[34789]\d{9})$/) > -1) {
+                                let newVal = phoneVal.replace(/^(?<num>[23]\d{6})$/, '8383$<num>').replace(/^\+?7?(?<num>[34789]\d{9})$/, '8$<num>').replace(/^\+8(?<num>[34789]\d{9})$/, '8$<num>');
+                                scanResult[typeName]['TO_CORRECT_HTML'] += '<tr><td>'+origVal+' &rarr; '+newVal+'</td><td><a href="https://' + BX24.getDomain() + '/crm/'+typeName+'/details/' + arElement['ID'] +'/" target="_blank">'+elementName+'</a></td></tr>';
+                                arToCorrect[typeName][phoneID] = newVal;
+                                window.arBatch.push(JSON.parse(JSON.stringify(['crm.'+typeName+'.update', {
+                                    'id': arElement['ID'],
+                                    'fields': {
+                                        'PHONE': [
+                                            {'ID': phoneID, 'VALUE': newVal}
+                                        ]
+                                    }
+                                }])));
+                                scanResult[typeName]['PHONES_TO_CORRECT']++;
+                                scanResult['ITOGO']['PHONES_TO_CORRECT']++;
+                            } else {
+                                if (phoneVal.search(/^8(?<num>[34789]\d{9})$/) > -1) {
+                                    scanResult[typeName]['OK_HTML'] += '<tr><td>'+origVal+'</td><td><a href="https://' + BX24.getDomain() + '/crm/'+typeName+'/details/' + arElement['ID'] +'/" target="_blank">'+elementName+'</a></td></tr>';
+                                    arCorrect[typeName][phoneID] = phoneVal;
+                                    scanResult[typeName]['PHONES_OK']++;
+                                    scanResult['ITOGO']['PHONES_OK']++;
+                                } else {
+                                    arIncorrect[typeName][phoneID] = phoneVal;
+                                    scanResult[typeName]['INCORRECT_HTML'] += '<tr><td>'+origVal+'</td><td><a href="https://' + BX24.getDomain() + '/crm/'+typeName+'/details/' + arElement['ID'] +'/" target="_blank">'+elementName+'</a></td></tr>';
+                                    scanResult[typeName]['PHONES_INCORRECT']++;
+                                    scanResult['ITOGO']['PHONES_INCORRECT']++;
+                                }
+                            }
+                        }
+                    }
+                    scanResult[typeName]['INCORRECT_HTML'] += '</table>';
+                    scanResult[typeName]['TO_CORRECT_HTML'] += '</table>';
+                    scanResult[typeName]['OK_HTML'] += '</table>';
+                    echoRow(typeName, scanResult);
+                    scannedCount++;
+                    if (Object.keys(arEntityTypes).length == scannedCount) {
+                        echoRow('ITOGO', scanResult);
+                        toTxt();
+                        //toExcel();
+                        $('.preloader').hide();
+                    }
+                    //debugger;
+                });
+            }
+        }
+        //
+    }
+
+    BX24.init(function(){
+        BX24.ready(function(){
+            scanCrmPhones();
+            $('#results').on('click', '.js-showTable', function() {
+                //debugger;
+                let table = $(this).parents('td').find('table');
+                // if (table.is(':visible')) {
+                //     table.slideUp('500');
+                // } else {
+                //     table.slideDown();
+                // }
+				table.toggle();
+                BX24.resizeWindow($('body').outerWidth(), ($('body').outerHeight()+50));
+                return false;
+            }).on('click', '.js-submitButton', function() {
+                if (window.arBatch.length > 0) {
+                    $('.preloader').show();
+                    callBatchObj(window.arBatch).then(function (results) {
+                        console.log(results);
+                        let cntSuccess = 0;
+                        let cntError = 0;
+                        for (var i in results) {
+                            if (results.hasOwnProperty(i)) {
+                                let result = results[i];
+                                if (result.data() == true) {
+                                    cntSuccess++;
+                                } else {
+                                    cntError++;
+                                    console.error(result);
+                                }
+                            }
+                        }
+                        alert('Из ' + window.arBatch.length + ' запросов успешно выполнено ' + cntSuccess);
+                        scanCrmPhones();
+                    });
+                } else {
+                    alert('Нет номеров для обработки');
+				}
+            });
+
+        });
+        //console.log('B24 SDK is ready!', BX24.isAdmin());
+    });
+</script>
+</body>
+</html>
